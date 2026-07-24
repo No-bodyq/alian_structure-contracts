@@ -71,3 +71,34 @@ than once.
 4. Use the `900-999` range only for errors shared by multiple contracts.
 5. Update this document whenever a new error code is introduced.
 6. Update the uniqueness and stability tests when adding a shared variant.
+
+## Event schemas
+
+Protocol events use stable two-part topic tuples. Off-chain indexers should
+match both topic symbols and decode the data using the documented order and
+types.
+
+The legacy single-symbol constants and generic `emit` helper remain available
+for backward compatibility. New protocol code should use the typed helpers in
+`shared::events`.
+
+| Event | Helper | Topics | Data |
+|---|---|---|---|
+| `AidCreated` | `emit_aid_created` | `("aid", "created")` | `(u64 aid_id, Address donor, Address recipient, i128 amount, u64 created_at, u64 expires_at)` |
+| `AidClaimed` | `emit_aid_claimed` | `("aid", "claimed")` | `(u64 aid_id, Address claimant, u64 claimed_at)` |
+| `AidSettled` | `emit_aid_settled` | `("aid", "settled")` | `(u64 aid_id, Address recipient, i128 amount, u64 settled_at)` |
+| `AidRefunded` | `emit_aid_refunded` | `("aid", "refunded")` | `(u64 aid_id, Address donor, i128 amount, u64 refunded_at)` |
+| `CommissionPaid` | `emit_commission_paid` | `("comm", "paid")` | `(Address recipient, i128 amount, u64 paid_at)` |
+| `TreasuryDeposit` | `emit_treasury_deposit` | `("treasury", "deposit")` | `(Symbol category, Address depositor, i128 amount, i128 new_balance)` |
+| `TreasuryWithdrawal` | `emit_treasury_withdrawal` | `("treasury", "withdraw")` | `(Symbol category, Address recipient, i128 amount, i128 remaining_balance)` |
+| `ContractPaused` | `emit_contract_paused` | `("contract", "paused")` | `(Address actor, u64 paused_at)` |
+| `ContractResumed` | `emit_contract_resumed` | `("contract", "resumed")` | `(Address actor, u64 resumed_at)` |
+| `ContractUpgraded` | `emit_contract_upgraded` | `("contract", "upgraded")` | `(Address actor, BytesN<32> wasm_hash, u64 upgraded_at)` |
+
+### Event stability rules
+
+1. Do not change a published event's topic tuple.
+2. Do not reorder, remove, or change the type of existing data fields.
+3. Add new event versions instead of silently changing an existing schema.
+4. Use the typed helper whenever one exists.
+5. Update this table and the event tests whenever a new schema is introduced.

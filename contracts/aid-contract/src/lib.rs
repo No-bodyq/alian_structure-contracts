@@ -3,7 +3,7 @@
 use soroban_sdk::{
     contract, contractimpl, panic_with_error, token, Address, Env, Symbol, Map,
 };
-use shared::{emit, AID_CREATED, Error};
+use shared::{emit_aid_created, Error};
 
 /// Storage keys
 const KEY_TOKEN: Symbol = Symbol::new("token");
@@ -135,7 +135,15 @@ impl AidContract {
         env.storage().persistent().set(&KEY_AIDS, &aids);
 
         // Emit the AidCreated event
-        emit(&env, AID_CREATED, (aid_id, donor, recipient, amount, current_time, expiry));
+        emit_aid_created(
+            &env,
+            aid_id,
+            &donor,
+            &recipient,
+            amount,
+            current_time,
+            expiry,
+        );
 
         aid_id
     }

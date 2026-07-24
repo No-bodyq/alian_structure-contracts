@@ -4,7 +4,7 @@ use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol};
 
 use shared::auth::{self, Role};
 use shared::errors::Error;
-use shared::events::{self, TREASURY_WITHDRAW};
+use shared::events::{self, emit_treasury_deposit, emit_treasury_withdrawal};
 
 /// Storage key prefix for per-category balances; the full key is
 /// `(BALANCE, category)`.
@@ -72,10 +72,11 @@ impl TreasuryContract {
         if amount <= 0 {
             return Err(Error::InvalidArgument);
         }
-        let key = (BALANCE, category);
+        let key = (BALANCE, category.clone());
         let balance: i128 = env.storage().instance().get(&key).unwrap_or(0);
         let new_balance = balance.checked_add(amount).ok_or(Error::Overflow)?;
         env.storage().instance().set(&key, &new_balance);
+        emit_treasury_deposit(&env, category, &caller, amount, new_balance);
         Ok(())
     }
 
@@ -101,7 +102,7 @@ impl TreasuryContract {
     ///    -> `Error::InsufficientBalance`
     ///
     /// On success, decrements the category balance and emits the shared
-    /// `TREASURY_WITHDRAW` event with `(category, to, amount, remaining)`.
+    /// `TreasuryWithdrawal` event with `(category, to, amount, remaining)`.
     pub fn withdraw(
         env: Env,
         caller: Address,
@@ -138,7 +139,7 @@ impl TreasuryContract {
         // internal accounting only. If this treasury custodies a live
         // SAC/token, wire a `token::Client::transfer(&to, &amount)` call
         // here (before the event emit) using a stored token address.
-        events::emit(&env, TREASURY_WITHDRAW, (category, to, amount, remaining));
+        emit_treasury_withdrawal(&env, category, &to, amount, remaining);
 
         Ok(())
     }
