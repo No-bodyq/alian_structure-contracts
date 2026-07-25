@@ -1,6 +1,24 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracterror, token, Address, Env};
+use soroban_sdk::{
+    contract, contractimpl, panic_with_error, token, Address, Env, Symbol, Map,
+};
+use shared::{emit_aid_created, Error};
+
+/// Storage keys
+const KEY_TOKEN: Symbol = Symbol::new("token");
+const KEY_AID_COUNTER: Symbol = Symbol::new("aid_cnt");
+const KEY_AIDS: Symbol = Symbol::new("aids");
+
+/// Aid status enum
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+#[repr(u32)]
+pub enum AidStatus {
+    Created = 0,
+    Claimed = 1,
+    Settled = 2,
+    Refunded = 3,
+}
 
 use shared::{emit, AID_CLAIMED, AID_CREATED, AID_REFUNDED, AID_SETTLED};
 use shared::storage::{is_paused, set_paused as shared_set_paused};
@@ -102,11 +120,24 @@ impl AidContract {
         };
         set_aid(&env, aid_id, &record);
 
-        // Track the highest used id so auto-increment helpers work.
-        let counter = get_aid_counter(&env);
-        if aid_id > counter {
-            set_aid_counter(&env, aid_id);
-        }
+        // Store the aid record in a persistent map of aid_id -> AidRecord
+        let mut aids: Map<u64, AidRecord> = env.storage()
+            .persistent()
+            .get(&KEY_AIDS)
+            .unwrap_or_else(|| Map::new(&env));
+        aids.insert(aid_id, aid_record);
+        env.storage().persistent().set(&KEY_AIDS, &aids);
+
+        // Emit the AidCreated event
+        emit_aid_created(
+            &env,
+            aid_id,
+            &donor,
+            &recipient,
+            amount,
+            current_time,
+            expiry,
+        );
 
         emit(&env, AID_CREATED, (aid_id, donor, recipient, amount, expiry_ledger));
         aid_id

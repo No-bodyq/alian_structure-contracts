@@ -4,7 +4,7 @@ use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol};
 
 use shared::auth::{self, Role};
 use shared::errors::Error;
-use shared::events::{self, TREASURY_WITHDRAW};
+use shared::events::{self, emit_treasury_deposit, emit_treasury_withdrawal, TREASURY_WITHDRAW};
 use shared::storage::{instance_get, instance_set, persistent_set};
 
 /// Storage key prefix for per-category balances; the full key is
@@ -66,10 +66,11 @@ impl TreasuryContract {
         if amount <= 0 {
             return Err(Error::InvalidArgument);
         }
-        let key = (BALANCE, category);
-        let balance: i128 = instance_get(&env, &key).unwrap_or(0);
+        let key = (BALANCE, category.clone());
+        let balance: i128 = env.storage().instance().get(&key).unwrap_or(0);
         let new_balance = balance.checked_add(amount).ok_or(Error::Overflow)?;
-        instance_set(&env, &key, &new_balance);
+        env.storage().instance().set(&key, &new_balance);
+        emit_treasury_deposit(&env, category, &caller, amount, new_balance);
         Ok(())
     }
 
@@ -91,7 +92,8 @@ impl TreasuryContract {
     /// 3. `amount` must not exceed the withdrawal limit  → `Error::WithdrawalLimitExceeded`
     /// 4. `amount` must not exceed the category balance  → `Error::InsufficientBalance`
     ///
-    /// On success, decrements the category balance and emits `TREASURY_WITHDRAW`.
+    /// On success, decrements the category balance and emits the shared
+    /// `TreasuryWithdrawal` event with `(category, to, amount, remaining)`.
     pub fn withdraw(
         env: Env,
         caller: Address,
@@ -119,7 +121,12 @@ impl TreasuryContract {
         let remaining = balance - amount;
         instance_set(&env, &key, &remaining);
 
-        events::emit(&env, TREASURY_WITHDRAW, (category, to, amount, remaining));
+        // NOTE: as with the rest of this contract, balances here are
+        // internal accounting only. If this treasury custodies a live
+        // SAC/token, wire a `token::Client::transfer(&to, &amount)` call
+        // here (before the event emit) using a stored token address.
+        emit_treasury_withdrawal(&env, category, &to, amount, remaining);
+
         Ok(())
     }
 
