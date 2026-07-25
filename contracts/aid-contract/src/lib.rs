@@ -1,9 +1,7 @@
-#![no_std]
-
 use soroban_sdk::{
-    contract, contractimpl, panic_with_error, token, Address, Env, Symbol, Map,
+    contract, contractimpl, panic_with_error, token, Address, Env, Symbol, Map, BytesN,
 };
-use shared::{emit, AID_CREATED, Error};
+use shared::{emit, AID_CREATED, Error, auth};
 
 /// Storage keys
 const KEY_TOKEN: Symbol = Symbol::new("token");
@@ -155,5 +153,128 @@ impl AidContract {
             .instance()
             .get::<Symbol, Address>(&KEY_TOKEN)
             .expect("token not initialized")
+    }
+
+    /// Refund an expired and unclaimed aid to the donor.
+    pub fn refund_aid(env: Env, aid_id: u64) {
+        // Ensure the caller is authorized (donor or admin)
+        let aid = Self::get_aid(env.clone(), aid_id);
+        if aid.donor != auth::get_invoker_address(&env) && !auth::is_admin(&env) {
+            panic_with_error!(env, Error::Unauthorized);
+        }
+
+        // Verify that the aid has expired
+        if env.ledger().timestamp() < aid.expiry {
+            panic_with_error!(env, Error::NotExpiredYet);
+        }
+
+        // Verify that the aid is in a refundable state (Created)
+        if aid.status != AidStatus::Created as u32 {
+            panic_with_error!(env, Error::AlreadyRefunded);
+        }
+
+        // Update the aid status to Refunded
+        let mut updated_aid = aid.clone();
+        updated_aid.status = AidStatus::Refunded as u32;
+
+        // Transfer the funds back to the donor
+        let token = Self::get_token(env.clone());
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &aid.donor,
+            &aid.amount,
+        );
+
+        // Update the aid record in storage
+        let mut aids: Map<u64, AidRecord> = env
+            .storage()
+            .persistent()
+            .get(&KEY_AIDS)
+            .expect("no aid records found");
+        aids.insert(aid_id, updated_aid);
+        env.storage().persistent().set(&KEY_AIDS, &aids);
+
+        // Emit the AidRefunded event
+        emit(
+            &env,
+            Symbol::new("aid_refunded"),
+            (aid_id, aid.donor, aid.amount),
+        );
+    }
+
+    /// Claim an aid, transferring the escrowed funds to the recipient.
+    pub fn claim_aid(env: Env, aid_id: u64, recipient: Address) {
+        // Ensure the caller is the intended recipient
+        recipient.require_auth();
+
+        // Check if the contract is paused
+        if env.storage().instance().get(&Symbol::new("paused")).unwrap_or(false) {
+            panic_with_error!(env, Error::Paused);
+        }
+
+        let mut aid = Self::get_aid(env.clone(), aid_id);
+
+        // Verify that the caller is the recipient
+        if aid.recipient != recipient {
+            panic_with_error!(env, Error::Unauthorized);
+        }
+
+        // Verify that the aid has not expired
+        if env.ledger().timestamp() >= aid.expiry {
+            panic_with_error!(env, Error::Expired);
+        }
+
+        // Verify that the aid is in a claimable state
+        if aid.status != AidStatus::Created as u32 {
+            panic_with_error!(env, Error::AlreadyClaimed);
+        }
+
+        // Update the aid status to Claimed
+        aid.status = AidStatus::Claimed as u32;
+
+        // Transfer the funds to the recipient
+        let token = Self::get_token(env.clone());
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &recipient,
+            &aid.amount,
+        );
+
+        // Update the aid status to Settled
+        aid.status = AidStatus::Settled as u32;
+
+        // Update the aid record in storage
+        let mut aids: Map<u64, AidRecord> = env
+            .storage()
+            .persistent()
+            .get(&KEY_AIDS)
+            .expect("no aid records found");
+        aids.insert(aid_id, aid.clone());
+        env.storage().persistent().set(&KEY_AIDS, &aids);
+
+        // Emit the AidClaimed and AidSettled events
+        emit(
+            &env,
+            Symbol::new("aid_claimed"),
+            (aid_id, recipient.clone()),
+        );
+        emit(
+            &env,
+            Symbol::new("aid_settled"),
+            (aid_id, recipient, aid.amount),
+        );
+    }
+
+    /// Set the paused state of the contract.
+    pub fn set_paused(env: Env, admin: Address, paused: bool) {
+        let contract_admin = shared::auth::get_admin(&env);
+        if admin != contract_admin {
+             panic_with_error!(env, Error::Unauthorized);
+        }
+        admin.require_auth();
+
+        env.storage().instance().set(&Symbol::new("paused"), &paused);
     }
 }
